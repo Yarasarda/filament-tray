@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 12px; font: 13px system-ui, sans-serif; background: #1c1d21; color: #e8e8ea; user-select: none; }
+  h1 { font-size: 13px; margin: 0 0 10px; display: flex; justify-content: space-between; align-items: center; }
+  h1 button { background: none; border: 0; color: #9aa; cursor: pointer; font-size: 15px; }
+  .slot { background: #26272c; border-radius: 10px; padding: 9px 10px; margin-bottom: 8px; }
+  .row { display: flex; align-items: center; gap: 8px; }
+  .dot { width: 14px; height: 14px; border-radius: 50%; border: 1px solid #fff4; flex: none; }
+  .name { flex: 1; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .grams { font-variant-numeric: tabular-nums; }
+  .sub { color: #8b8d94; font-size: 11px; margin: 3px 0 6px 22px; }
+  .bar { height: 6px; border-radius: 3px; background: #3a3b41; overflow: hidden; }
+  .bar > i { display: block; height: 100%; background: #4cc38a; }
+  .low .bar > i { background: #e5484d; }
+  .empty { opacity: .45; }
+  .err { color: #ff8a8a; padding: 8px 0; }
+  #settings { display: none; }
+  label { display: block; margin: 6px 0 2px; color: #9aa; font-size: 11px; }
+  input { width: 100%; padding: 6px; background: #26272c; color: inherit; border: 1px solid #3a3b41; border-radius: 6px; }
+  .btns { margin-top: 10px; display: flex; gap: 8px; }
+  .btns button { flex: 1; padding: 6px; border-radius: 6px; border: 0; background: #3a3b41; color: inherit; cursor: pointer; }
+</style>
+</head>
+<body>
+<div id="main">
+  <h1><span>Filament · AMS</span><span><button id="r" title="Yenile">⟳</button><button id="g" title="Ayarlar">⚙</button></span></h1>
+  <div id="list"></div>
+</div>
+<div id="settings">
+  <h1><span>Ayarlar</span></h1>
+  <label>Spoolman adresi</label><input id="url">
+  <label>Uyarı eşiği (gram)</label><input id="th" type="number" min="0">
+  <label>Yenileme aralığı (sn)</label><input id="iv" type="number" min="5">
+  <div class="btns"><button id="cancel">İptal</button><button id="save">Kaydet</button></div>
+</div>
+<script>
+const { invoke } = window.__TAURI__.core;
+const { listen } = window.__TAURI__.event;
+const $ = (id) => document.getElementById(id);
+let cfg = { threshold_g: 100 };
+
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+function render(snap) {
+  if (snap.error) { $('list').innerHTML = `<div class="err">${esc(snap.error)}</div>`; return; }
+  const by = Object.fromEntries(snap.slots.map((s) => [s.slot, s]));
+  let html = '';
+  for (let i = 1; i <= 4; i++) {
+    const s = by[i];
+    if (!s) { html += `<div class="slot empty"><div class="row"><span class="dot"></span><span class="name">AMS ${i}: boş</span></div></div>`; continue; }
+    const low = s.remaining < cfg.threshold_g ? 'low' : '';
+    html += `<div class="slot ${low}">
+      <div class="row"><span class="dot" style="background:#${esc(s.color)}"></span>
+      <span class="name">${i} · ${esc(s.name)}</span>
+      <span class="grams">${s.remaining.toFixed(0)} g</span></div>
+      <div class="sub">${esc(s.vendor)} ${esc(s.material)} · %${s.percent.toFixed(0)} / ${s.initial.toFixed(0)} g</div>
+      <div class="bar"><i style="width:${s.percent}%"></i></div></div>`;
+  }
+  $('list').innerHTML = html;
+}
+
+$('r').onclick = async () => render(await invoke('get_snapshot'));
+$('g').onclick = async () => {
+  cfg = await invoke('get_config');
+  $('url').value = cfg.spoolman_url; $('th').value = cfg.threshold_g; $('iv').value = cfg.interval_s;
+  $('main').style.display = 'none'; $('settings').style.display = 'block';
+};
+$('cancel').onclick = () => { $('settings').style.display = 'none'; $('main').style.display = 'block'; };
+$('save').onclick = async () => {
+  cfg = { spoolman_url: $('url').value.trim(), threshold_g: +$('th').value, interval_s: +$('iv').value };
+  await invoke('set_config', { config: cfg });
+  $('cancel').onclick();
+};
+
+listen('snapshot', (e) => render(e.payload));
+document.addEventListener('mouseenter', () => invoke('set_popup_hover', { inside: true }));
+document.documentElement.addEventListener('mouseleave', () => invoke('set_popup_hover', { inside: false }));
+document.documentElement.addEventListener('mouseenter', () => invoke('set_popup_hover', { inside: true }));
+(async () => { cfg = await invoke('get_config'); render(await invoke('get_snapshot')); })();
+</script>
+</body>
+</html>
