@@ -16,6 +16,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager, PhysicalPosition, State, WebviewWindow,
 };
+use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_notification::NotificationExt;
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -23,6 +24,8 @@ struct Config {
     spoolman_url: String,
     threshold_g: f64,
     interval_s: u64,
+    #[serde(default)]
+    autostart_prompted: bool,
 }
 
 impl Default for Config {
@@ -31,6 +34,7 @@ impl Default for Config {
             spoolman_url: "http://192.168.1.123:7912".into(),
             threshold_g: 100.0,
             interval_s: 30,
+            autostart_prompted: false,
         }
     }
 }
@@ -252,6 +256,21 @@ fn set_popup_hover(app: AppHandle, state: State<AppState>, inside: bool) {
     }
 }
 
+#[tauri::command]
+fn is_autostart_enabled(app: AppHandle) -> Result<bool, String> {
+    app.autolaunch().is_enabled().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn enable_autostart(app: AppHandle) -> Result<(), String> {
+    app.autolaunch().enable().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn disable_autostart(app: AppHandle) -> Result<(), String> {
+    app.autolaunch().disable().map_err(|e| e.to_string())
+}
+
 fn toggle_window(app: &AppHandle, click: Option<PhysicalPosition<f64>>) {
     let Some(w) = app.get_webview_window("main") else { return };
     if w.is_visible().unwrap_or(false) {
@@ -272,11 +291,15 @@ fn toggle_window(app: &AppHandle, click: Option<PhysicalPosition<f64>>) {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
         .invoke_handler(tauri::generate_handler![
             get_snapshot,
             get_config,
             set_config,
-            set_popup_hover
+            set_popup_hover,
+            is_autostart_enabled,
+            enable_autostart,
+            disable_autostart,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -335,7 +358,13 @@ fn main() {
                 })
                 .build(app)?;
 
+            let show_on_start = !load_config(&handle).autostart_prompted;
             if let Some(w) = app.get_webview_window("main") {
+                if show_on_start {
+                    let _ = w.show();
+                    let _ = w.center();
+                    let _ = w.set_focus();
+                }
                 let w2 = w.clone();
                 w.on_window_event(move |e| {
                     if let tauri::WindowEvent::Focused(false) = e {

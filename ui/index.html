@@ -24,6 +24,19 @@
   input { width: 100%; padding: 6px; background: #26272c; color: inherit; border: 1px solid #3a3b41; border-radius: 6px; }
   .btns { margin-top: 10px; display: flex; gap: 8px; }
   .btns button { flex: 1; padding: 6px; border-radius: 6px; border: 0; background: #3a3b41; color: inherit; cursor: pointer; }
+  #autostart-modal {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.75);
+    backdrop-filter: blur(2px);
+    z-index: 99;
+    padding: 16px;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    text-align: center;
+  }
 </style>
 </head>
 <body>
@@ -31,18 +44,39 @@
   <h1><span>Filament · AMS</span><span><button id="r" title="Yenile">⟳</button><button id="g" title="Ayarlar">⚙</button></span></h1>
   <div id="list"></div>
 </div>
+
 <div id="settings">
   <h1><span>Ayarlar</span></h1>
   <label>Spoolman adresi</label><input id="url">
   <label>Uyarı eşiği (gram)</label><input id="th" type="number" min="0">
   <label>Yenileme aralığı (sn)</label><input id="iv" type="number" min="5">
+  <div style="margin-top:12px; display:flex; align-items:center; gap:8px;">
+    <input id="as-toggle" type="checkbox" style="width:auto; margin:0; cursor:pointer;">
+    <label for="as-toggle" style="margin:0; font-size:12px; color:#e8e8ea; cursor:pointer;">Sistem açılışında otomatik başlat</label>
+  </div>
   <div class="btns"><button id="cancel">İptal</button><button id="save">Kaydet</button></div>
 </div>
+
+<div id="autostart-modal">
+  <div style="background:#26272c; border:1px solid #3a3b41; border-radius:10px; padding:16px; width:100%;">
+    <div style="font-size:14px; font-weight:700; margin-bottom:8px; display:flex; align-items:center; justify-content:center; gap:6px;">
+      <span>🚀</span><span>Otomatik Başlatma</span>
+    </div>
+    <div style="font-size:12px; color:#c0c2c8; line-height:1.4; margin-bottom:14px;">
+      Filament Tray'in bilgisayarınız açıldığında arka planda otomatik olarak başlamasını ister misiniz?
+    </div>
+    <div class="btns">
+      <button id="as-no" style="background:#3a3b41; color:#bbb;">Hayır</button>
+      <button id="as-yes" style="background:#4cc38a; color:#111; font-weight:600;">Evet, Başlat</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 const $ = (id) => document.getElementById(id);
-let cfg = { threshold_g: 100 };
+let cfg = { threshold_g: 100, autostart_prompted: false };
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
@@ -67,21 +101,63 @@ function render(snap) {
 $('r').onclick = async () => render(await invoke('get_snapshot'));
 $('g').onclick = async () => {
   cfg = await invoke('get_config');
-  $('url').value = cfg.spoolman_url; $('th').value = cfg.threshold_g; $('iv').value = cfg.interval_s;
-  $('main').style.display = 'none'; $('settings').style.display = 'block';
+  $('url').value = cfg.spoolman_url;
+  $('th').value = cfg.threshold_g;
+  $('iv').value = cfg.interval_s;
+  try {
+    $('as-toggle').checked = await invoke('is_autostart_enabled');
+  } catch (e) {
+    $('as-toggle').checked = false;
+  }
+  $('main').style.display = 'none';
+  $('settings').style.display = 'block';
 };
 $('cancel').onclick = () => { $('settings').style.display = 'none'; $('main').style.display = 'block'; };
 $('save').onclick = async () => {
-  cfg = { spoolman_url: $('url').value.trim(), threshold_g: +$('th').value, interval_s: +$('iv').value };
+  cfg = {
+    ...cfg,
+    spoolman_url: $('url').value.trim(),
+    threshold_g: +$('th').value,
+    interval_s: +$('iv').value
+  };
   await invoke('set_config', { config: cfg });
+  try {
+    if ($('as-toggle').checked) {
+      await invoke('enable_autostart');
+    } else {
+      await invoke('disable_autostart');
+    }
+  } catch (e) {
+    console.error(e);
+  }
   $('cancel').onclick();
+};
+
+$('as-yes').onclick = async () => {
+  try { await invoke('enable_autostart'); } catch (e) { console.error(e); }
+  cfg.autostart_prompted = true;
+  await invoke('set_config', { config: cfg });
+  $('autostart-modal').style.display = 'none';
+};
+
+$('as-no').onclick = async () => {
+  cfg.autostart_prompted = true;
+  await invoke('set_config', { config: cfg });
+  $('autostart-modal').style.display = 'none';
 };
 
 listen('snapshot', (e) => render(e.payload));
 document.addEventListener('mouseenter', () => invoke('set_popup_hover', { inside: true }));
 document.documentElement.addEventListener('mouseleave', () => invoke('set_popup_hover', { inside: false }));
 document.documentElement.addEventListener('mouseenter', () => invoke('set_popup_hover', { inside: true }));
-(async () => { cfg = await invoke('get_config'); render(await invoke('get_snapshot')); })();
+
+(async () => {
+  cfg = await invoke('get_config');
+  render(await invoke('get_snapshot'));
+  if (!cfg.autostart_prompted) {
+    $('autostart-modal').style.display = 'flex';
+  }
+})();
 </script>
 </body>
 </html>
